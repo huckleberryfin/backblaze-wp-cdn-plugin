@@ -1,0 +1,14 @@
+{
+    "name": "backblaze/auto-upload",
+    "description": "WordPress plugin for automatic Backblaze B2 uploads with CDN integration",
+    "type": "wordpress-plugin",
+    "require": {
+        "php": ">=7.4",
+        "aws/aws-sdk-php": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "BackblazeAutoUpload\\": "includes/"
+        }
+    }
+}
