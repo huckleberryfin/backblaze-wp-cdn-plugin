@@ -117,6 +117,7 @@ class BB_WebP_Admin {
             let shouldStop = false;
             let totalRemaining = <?php echo $stats['remaining']; ?>;
             let convertedCount = 0;
+            let currentOffset = 0;  // FIX: Track offset for pagination
 
             $('#start-convert').on('click', function() {
                 if (isRunning || totalRemaining === 0) return;
@@ -124,6 +125,7 @@ class BB_WebP_Admin {
                 isRunning = true;
                 shouldStop = false;
                 convertedCount = 0;
+                currentOffset = 0;  // FIX: Reset offset
 
                 $(this).hide();
                 $('#stop-convert').show();
@@ -153,12 +155,14 @@ class BB_WebP_Admin {
                 $.post(ajaxurl, {
                     action: 'bb_webp_bulk_convert',
                     batch_size: 10,
+                    offset: currentOffset,  // FIX: Send offset parameter
                     _ajax_nonce: ajaxNonce
                 }, function(response) {
                     if (response.success) {
                         const data = response.data;
 
                         convertedCount += data.converted;
+                        currentOffset += 10;  // FIX: Increment offset for next batch
                         $('#converted-count').text(convertedCount);
 
                         // Update progress
