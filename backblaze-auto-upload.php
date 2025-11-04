@@ -14,6 +14,9 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-settings.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-media-handler.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-bulk-sync.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-admin-menu.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-analytics.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-webp-converter.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-webp-admin.php';
 
 // Initialize plugin
 class BackblazeAutoUpload {
@@ -22,6 +25,9 @@ class BackblazeAutoUpload {
         new BB_Media_Handler();
         new BB_Bulk_Sync();
         new BB_Admin_Menu();
+        new BB_Analytics();
+        new BB_WebP_Converter();
+        new BB_WebP_Admin();
     }
 }
 

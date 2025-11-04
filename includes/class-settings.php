@@ -15,7 +15,11 @@ class BB_Settings {
         register_setting('backblaze_settings', 'bb_cdn_url');
         register_setting('backblaze_settings', 'bb_key_id');
         register_setting('backblaze_settings', 'bb_app_key');
-        
+
+        // WebP settings
+        register_setting('backblaze_settings', 'bb_webp_enabled');
+        register_setting('backblaze_settings', 'bb_webp_quality');
+
         if (isset($_POST['test_upload']) && check_admin_referer('backblaze_test')) {
             add_action('admin_notices', array($this, 'display_test_results'));
         }
@@ -50,6 +54,34 @@ class BB_Settings {
                         <td><input type="password" name="bb_app_key" value="<?php echo esc_attr(get_option('bb_app_key')); ?>" class="regular-text"></td>
                     </tr>
                 </table>
+
+                <h2 style="margin-top: 40px;">WebP Optimization Settings</h2>
+                <table class="form-table">
+                    <tr>
+                        <th>Enable WebP Conversion</th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="bb_webp_enabled" value="1" <?php checked(get_option('bb_webp_enabled', 0), 1); ?>>
+                                Automatically convert images to WebP format
+                            </label>
+                            <p class="description">
+                                WebP images are typically 25-35% smaller than JPEG/PNG with similar quality.
+                                <?php if (!function_exists('imagewebp')): ?>
+                                    <br><strong style="color: red;">Warning: Your server does not support WebP conversion. Please enable GD library with WebP support.</strong>
+                                <?php endif; ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>WebP Quality</th>
+                        <td>
+                            <input type="number" name="bb_webp_quality" value="<?php echo esc_attr(get_option('bb_webp_quality', 80)); ?>" min="1" max="100" style="width: 80px;">
+                            <span>%</span>
+                            <p class="description">Lower values = smaller files, lower quality. Recommended: 75-85</p>
+                        </td>
+                    </tr>
+                </table>
+
                 <?php submit_button(); ?>
             </form>
             

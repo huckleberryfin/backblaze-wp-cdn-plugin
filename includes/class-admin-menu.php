@@ -39,6 +39,26 @@ class BB_Admin_Menu {
             'backblaze-bulk-sync',
             array($this, 'bulk_sync_page')
         );
+
+        // Analytics submenu
+        add_submenu_page(
+            'backblaze-cdn',
+            'Analytics',
+            'Analytics',
+            'manage_options',
+            'backblaze-analytics',
+            array($this, 'analytics_page')
+        );
+
+        // WebP Conversion submenu
+        add_submenu_page(
+            'backblaze-cdn',
+            'WebP Conversion',
+            'WebP Conversion',
+            'manage_options',
+            'backblaze-webp',
+            array($this, 'webp_page')
+        );
     }
 
     public function settings_page() {
@@ -51,6 +71,20 @@ class BB_Admin_Menu {
         // Load bulk sync class page
         $bulk_sync = new BB_Bulk_Sync();
         $bulk_sync->sync_page();
+    }
+
+    public function analytics_page() {
+        // Load analytics class page
+        require_once plugin_dir_path(__FILE__) . 'class-analytics.php';
+        $analytics = new BB_Analytics();
+        $analytics->analytics_page();
+    }
+
+    public function webp_page() {
+        // Load WebP admin class page
+        require_once plugin_dir_path(__FILE__) . 'class-webp-admin.php';
+        $webp_admin = new BB_WebP_Admin();
+        $webp_admin->webp_page();
     }
 
     public function add_settings_link($links) {
