@@ -48,6 +48,9 @@ class BB_WebP_Converter {
         if ($result) {
             // Upload WebP version to Backblaze
             $this->upload_webp_to_backblaze($webp_path);
+
+            // Mark attachment with WebP metadata (called from wp_generate_attachment_metadata hook)
+            // We'll set metadata when attachment ID is available
         }
 
         return $upload;
@@ -61,6 +64,7 @@ class BB_WebP_Converter {
         $upload_dir = wp_upload_dir();
         $file = get_post_meta($attachment_id, '_wp_attached_file', true);
         $base_dir = dirname($upload_dir['basedir'] . '/' . $file);
+        $any_converted = false;
 
         foreach ($metadata['sizes'] as $size => $data) {
             $thumbnail_path = $base_dir . '/' . $data['file'];
@@ -82,11 +86,23 @@ class BB_WebP_Converter {
 
                     // Store WebP info in metadata
                     $metadata['sizes'][$size]['webp_file'] = basename($webp_path);
+                    $any_converted = true;
                 }
             }
         }
 
+        // Mark attachment as having WebP conversion if any were created
+        if ($any_converted) {
+            $this->mark_webp_converted($attachment_id);
+        }
+
         return $metadata;
+    }
+
+    private function mark_webp_converted($attachment_id) {
+        update_post_meta($attachment_id, '_bb_has_webp', 1);
+        // Clear stats cache since conversion status changed
+        delete_transient('bb_webp_stats');
     }
 
     private function create_webp_image($source_path, $dest_path, $mime_type) {
@@ -230,14 +246,14 @@ class BB_WebP_Converter {
     }
 
     private function webp_exists($attachment_id, $url) {
-        // Check if WebP file exists locally
-        $file = get_attached_file($attachment_id);
-        if (!$file) {
-            return false;
+        // Check postmeta first (faster, no CDN lookup)
+        if (get_post_meta($attachment_id, '_bb_has_webp', true)) {
+            return true;
         }
 
-        $webp_file = $this->get_webp_path($file);
-        return file_exists($webp_file);
+        // Fall back to CDN check if metadata not set
+        $webp_url = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $url);
+        return $this->file_exists_on_cdn($webp_url);
     }
 
     private function browser_supports_webp() {
@@ -284,100 +300,255 @@ class BB_WebP_Converter {
         $attachments = get_posts($args);
         $converted = 0;
         $skipped = 0;
+        $details = array();
+        $cdn_url = get_option('bb_cdn_url');
 
         foreach ($attachments as $attachment_id) {
             $file = get_attached_file($attachment_id);
-
-            if (!file_exists($file)) {
-                $skipped++;
-                continue;
-            }
-
-            $webp_path = $this->get_webp_path($file);
-
-            // Skip if WebP already exists
-            if (file_exists($webp_path)) {
-                $skipped++;
-                continue;
-            }
-
+            $filename = basename($file);
+            $title = get_the_title($attachment_id);
             $mime_type = get_post_mime_type($attachment_id);
-            $result = $this->create_webp_image($file, $webp_path, $mime_type);
 
-            if ($result) {
-                // Upload to Backblaze
-                $this->upload_webp_to_backblaze($webp_path);
+            // Build CDN URL for the original image
+            $upload_dir = wp_upload_dir();
+            $relative_path = str_replace($upload_dir['basedir'] . '/', '', $file);
+            $image_cdn_url = rtrim($cdn_url, '/') . '/' . $relative_path;
+            $webp_cdn_url = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_cdn_url);
 
-                // Convert thumbnails
-                $metadata = wp_get_attachment_metadata($attachment_id);
-                if (isset($metadata['sizes'])) {
-                    $base_dir = dirname($file);
-
-                    foreach ($metadata['sizes'] as $size => $data) {
-                        $thumb_path = $base_dir . '/' . $data['file'];
-                        $thumb_webp_path = $this->get_webp_path($thumb_path);
-
-                        if (file_exists($thumb_path) && !file_exists($thumb_webp_path)) {
-                            $this->create_webp_image($thumb_path, $thumb_webp_path, $data['mime-type']);
-                            $this->upload_webp_to_backblaze($thumb_webp_path);
-                        }
-                    }
-                }
+            // Check if WebP already exists on CDN
+            if ($this->file_exists_on_cdn($webp_cdn_url)) {
+                // WebP already exists - mark it as converted in database
+                $this->mark_webp_converted($attachment_id);
 
                 $converted++;
+                $details[] = array(
+                    'file' => $filename,
+                    'title' => $title,
+                    'status' => 'converted',
+                    'reason' => 'WebP version already exists on CDN (marked as converted)'
+                );
+                continue;
             }
+
+            // Download image from CDN to temporary location
+            $temp_file = $this->download_from_cdn($image_cdn_url);
+
+            if (!$temp_file) {
+                $skipped++;
+                $details[] = array(
+                    'file' => $filename,
+                    'title' => $title,
+                    'status' => 'skipped',
+                    'reason' => 'Failed to download from CDN'
+                );
+                continue;
+            }
+
+            // Create temporary WebP file
+            $temp_webp = wp_tempnam() . '.webp';
+            $result = $this->create_webp_image($temp_file, $temp_webp, $mime_type);
+
+            if ($result) {
+                // Upload WebP to Backblaze
+                $this->upload_webp_to_backblaze_by_path($temp_webp, $webp_cdn_url);
+
+                // Mark attachment with WebP metadata
+                $this->mark_webp_converted($attachment_id);
+
+                $converted++;
+                $details[] = array(
+                    'file' => $filename,
+                    'title' => $title,
+                    'status' => 'converted',
+                    'reason' => 'Successfully created WebP on CDN'
+                );
+            } else {
+                $skipped++;
+                $details[] = array(
+                    'file' => $filename,
+                    'title' => $title,
+                    'status' => 'skipped',
+                    'reason' => 'WebP conversion failed (check server GD library)'
+                );
+            }
+
+            // Clean up temporary files
+            @unlink($temp_file);
+            @unlink($temp_webp);
         }
 
         return array(
             'success' => true,
             'converted' => $converted,
             'skipped' => $skipped,
-            'has_more' => count($attachments) === $batch_size
+            'has_more' => count($attachments) === $batch_size,
+            'details' => $details
         );
     }
 
-    public function get_webp_stats() {
-        $args = array(
-            'post_type' => 'attachment',
-            'post_mime_type' => array('image/jpeg', 'image/jpg', 'image/png'),
-            'post_status' => 'inherit',
-            'posts_per_page' => -1,
-            'fields' => 'ids'
-        );
+    private function file_exists_on_cdn($cdn_url) {
+        $response = wp_remote_head($cdn_url, array(
+            'timeout' => 5,
+            'sslverify' => true
+        ));
 
-        $attachments = get_posts($args);
-        $total = count($attachments);
-        $converted = 0;
-        $total_original_size = 0;
-        $total_webp_size = 0;
-
-        foreach ($attachments as $attachment_id) {
-            $file = get_attached_file($attachment_id);
-            if (!$file || !file_exists($file)) {
-                continue;
-            }
-
-            $webp_path = $this->get_webp_path($file);
-
-            if (file_exists($webp_path)) {
-                $converted++;
-                $total_original_size += filesize($file);
-                $total_webp_size += filesize($webp_path);
-            }
+        if (is_wp_error($response)) {
+            return false;
         }
 
-        $savings_percent = $total_original_size > 0
-            ? round((($total_original_size - $total_webp_size) / $total_original_size) * 100, 1)
-            : 0;
+        $http_code = wp_remote_retrieve_response_code($response);
+        return $http_code === 200;
+    }
 
-        return array(
+    private function download_from_cdn($cdn_url) {
+        $response = wp_remote_get($cdn_url, array(
+            'timeout' => 30,
+            'sslverify' => true
+        ));
+
+        if (is_wp_error($response)) {
+            return false;
+        }
+
+        $http_code = wp_remote_retrieve_response_code($response);
+        if ($http_code !== 200) {
+            return false;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        if (empty($body)) {
+            return false;
+        }
+
+        $temp_file = wp_tempnam();
+        $file = fopen($temp_file, 'w');
+        if (!$file) {
+            return false;
+        }
+
+        fwrite($file, $body);
+        fclose($file);
+
+        return $temp_file;
+    }
+
+    private function upload_webp_to_backblaze_by_path($webp_path, $cdn_url) {
+        if (!file_exists($webp_path)) {
+            return false;
+        }
+
+        $key_id = get_option('bb_key_id');
+        $app_key = get_option('bb_app_key');
+
+        if (!$key_id || !$app_key) {
+            return false;
+        }
+
+        require_once plugin_dir_path(__FILE__) . 'class-uploader.php';
+
+        // Extract relative path from CDN URL
+        $cdn_url_base = get_option('bb_cdn_url');
+        $relative_path = str_replace(rtrim($cdn_url_base, '/') . '/', '', $cdn_url);
+
+        $uploader = new BB_Uploader(
+            get_option('bb_bucket'),
+            get_option('bb_endpoint'),
+            $cdn_url_base,
+            $key_id,
+            $app_key
+        );
+
+        return $uploader->upload_file($webp_path, $relative_path);
+    }
+
+    public function get_webp_stats() {
+        // Check cache first
+        $cached_stats = get_transient('bb_webp_stats');
+        if ($cached_stats !== false) {
+            return $cached_stats;
+        }
+
+        global $wpdb;
+
+        // Count total JPEG/PNG images
+        $total = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts}
+             WHERE post_type='attachment'
+             AND post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png')
+             AND post_status='inherit'"
+        );
+
+        // Count converted images (have _bb_has_webp postmeta)
+        $converted = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+             WHERE p.post_type='attachment'
+             AND p.post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png')
+             AND p.post_status='inherit'
+             AND pm.meta_key='_bb_has_webp'
+             AND pm.meta_value='1'"
+        );
+
+        $total = intval($total);
+        $converted = intval($converted);
+        $remaining = $total - $converted;
+
+        $stats = array(
             'total_images' => $total,
             'converted' => $converted,
-            'remaining' => $total - $converted,
-            'original_size' => $total_original_size,
-            'webp_size' => $total_webp_size,
-            'savings_bytes' => $total_original_size - $total_webp_size,
-            'savings_percent' => $savings_percent
+            'remaining' => $remaining,
+            'original_size' => 0,
+            'webp_size' => 0,
+            'savings_bytes' => 0,
+            'savings_percent' => 0
         );
+
+        // Cache for 1 hour
+        set_transient('bb_webp_stats', $stats, 3600);
+
+        return $stats;
+    }
+
+    public function refresh_webp_stats() {
+        // Refresh stats by querying database (fast and accurate)
+        global $wpdb;
+
+        // Count total JPEG/PNG images
+        $total = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts}
+             WHERE post_type='attachment'
+             AND post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png')
+             AND post_status='inherit'"
+        );
+
+        // Count converted images (have _bb_has_webp postmeta)
+        $converted = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+             WHERE p.post_type='attachment'
+             AND p.post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png')
+             AND p.post_status='inherit'
+             AND pm.meta_key='_bb_has_webp'
+             AND pm.meta_value='1'"
+        );
+
+        $total = intval($total);
+        $converted = intval($converted);
+        $remaining = $total - $converted;
+
+        $stats = array(
+            'total_images' => $total,
+            'converted' => $converted,
+            'remaining' => $remaining,
+            'original_size' => 0,
+            'webp_size' => 0,
+            'savings_bytes' => 0,
+            'savings_percent' => 0
+        );
+
+        // Cache for 1 hour
+        set_transient('bb_webp_stats', $stats, 3600);
+
+        return $stats;
     }
 }

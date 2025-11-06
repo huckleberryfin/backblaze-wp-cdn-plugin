@@ -17,6 +17,8 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-admin-menu.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-analytics.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-webp-converter.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-webp-admin.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-cli-commands.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-cron-handler.php';
 
 // Initialize plugin
 class BackblazeAutoUpload {
@@ -28,6 +30,7 @@ class BackblazeAutoUpload {
         new BB_Analytics();
         new BB_WebP_Converter();
         new BB_WebP_Admin();
+        new BB_CRON_Handler();
     }
 }
 

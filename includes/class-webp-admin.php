@@ -5,6 +5,8 @@ class BB_WebP_Admin {
 
     public function __construct() {
         add_action('wp_ajax_bb_webp_bulk_convert', array($this, 'ajax_bulk_convert'));
+        add_action('wp_ajax_bb_webp_clear_cache', array($this, 'ajax_clear_cache'));
+        add_action('wp_ajax_bb_webp_get_stats', array($this, 'ajax_get_stats'));
     }
 
     public function webp_page() {
@@ -38,31 +40,31 @@ class BB_WebP_Admin {
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0;">
                 <div style="background: #fff; padding: 20px; border: 1px solid #ccc; border-radius: 4px;">
                     <h3 style="margin: 0 0 10px 0; color: #666;">Total Images</h3>
-                    <p style="font-size: 32px; font-weight: bold; margin: 0; color: #2271b1;">
+                    <p id="stat-total" style="font-size: 32px; font-weight: bold; margin: 0; color: #2271b1;">
                         <?php echo number_format($stats['total_images']); ?>
                     </p>
                 </div>
 
                 <div style="background: #fff; padding: 20px; border: 1px solid #ccc; border-radius: 4px;">
                     <h3 style="margin: 0 0 10px 0; color: #666;">Converted</h3>
-                    <p style="font-size: 32px; font-weight: bold; margin: 0; color: #46b450;">
+                    <p id="stat-converted" style="font-size: 32px; font-weight: bold; margin: 0; color: #46b450;">
                         <?php echo number_format($stats['converted']); ?>
                     </p>
                 </div>
 
                 <div style="background: #fff; padding: 20px; border: 1px solid #ccc; border-radius: 4px;">
                     <h3 style="margin: 0 0 10px 0; color: #666;">Remaining</h3>
-                    <p style="font-size: 32px; font-weight: bold; margin: 0; color: #f0b849;">
+                    <p id="stat-remaining" style="font-size: 32px; font-weight: bold; margin: 0; color: #f0b849;">
                         <?php echo number_format($stats['remaining']); ?>
                     </p>
                 </div>
 
                 <div style="background: #fff; padding: 20px; border: 1px solid #ccc; border-radius: 4px;">
                     <h3 style="margin: 0 0 10px 0; color: #666;">Space Saved</h3>
-                    <p style="font-size: 32px; font-weight: bold; margin: 0; color: #2271b1;">
+                    <p id="stat-savings" style="font-size: 32px; font-weight: bold; margin: 0; color: #2271b1;">
                         <?php echo $stats['savings_percent']; ?>%
                     </p>
-                    <p style="font-size: 12px; color: #666; margin: 5px 0 0 0;">
+                    <p id="stat-savings-bytes" style="font-size: 12px; color: #666; margin: 5px 0 0 0;">
                         <?php echo $this->format_bytes($stats['savings_bytes']); ?>
                     </p>
                 </div>
@@ -117,7 +119,35 @@ class BB_WebP_Admin {
             let shouldStop = false;
             let totalRemaining = <?php echo $stats['remaining']; ?>;
             let convertedCount = 0;
-            let currentOffset = 0;  // FIX: Track offset for pagination
+            let currentOffset = 0;
+
+            function refreshStats() {
+                $.post(ajaxurl, {
+                    action: 'bb_webp_get_stats',
+                    _ajax_nonce: ajaxNonce
+                }, function(response) {
+                    if (response.success) {
+                        const stats = response.data;
+                        $('#stat-total').text(stats.total_images.toLocaleString());
+                        $('#stat-converted').text(stats.converted.toLocaleString());
+                        $('#stat-remaining').text(stats.remaining.toLocaleString());
+                        $('#stat-savings').text(stats.savings_percent + '%');
+                        $('#stat-savings-bytes').text(formatBytes(stats.savings_bytes));
+                    }
+                });
+            }
+
+            function formatBytes(bytes) {
+                if (bytes >= 1073741824) {
+                    return (bytes / 1073741824).toFixed(2) + ' GB';
+                } else if (bytes >= 1048576) {
+                    return (bytes / 1048576).toFixed(2) + ' MB';
+                } else if (bytes >= 1024) {
+                    return (bytes / 1024).toFixed(2) + ' KB';
+                } else {
+                    return bytes + ' B';
+                }
+            }
 
             $('#start-convert').on('click', function() {
                 if (isRunning || totalRemaining === 0) return;
@@ -125,7 +155,7 @@ class BB_WebP_Admin {
                 isRunning = true;
                 shouldStop = false;
                 convertedCount = 0;
-                currentOffset = 0;  // FIX: Reset offset
+                currentOffset = 0;
 
                 $(this).hide();
                 $('#stop-convert').show();
@@ -149,20 +179,21 @@ class BB_WebP_Admin {
                     $('#start-convert').show();
                     $('#stop-convert').hide().prop('disabled', false).text('Stop Conversion');
                     log('✓ Conversion stopped by user', 'green');
+                    refreshStats();
                     return;
                 }
 
                 $.post(ajaxurl, {
                     action: 'bb_webp_bulk_convert',
                     batch_size: 10,
-                    offset: currentOffset,  // FIX: Send offset parameter
+                    offset: currentOffset,
                     _ajax_nonce: ajaxNonce
                 }, function(response) {
                     if (response.success) {
                         const data = response.data;
 
                         convertedCount += data.converted;
-                        currentOffset += 10;  // FIX: Increment offset for next batch
+                        currentOffset += 10;
                         $('#converted-count').text(convertedCount);
 
                         // Update progress
@@ -170,7 +201,20 @@ class BB_WebP_Admin {
                         $('#convert-progress-bar').css('width', percentage + '%');
                         $('#convert-progress-text').text(percentage + '%');
 
-                        log('✓ Converted ' + data.converted + ' images, skipped ' + data.skipped, 'green');
+                        // Log detailed file-by-file results
+                        if (data.details && data.details.length > 0) {
+                            data.details.forEach(function(detail) {
+                                const statusEmoji = detail.status === 'converted' ? '✅' : '⏭️';
+                                const color = detail.status === 'converted' ? '#46b450' : '#f0b849';
+                                const message = statusEmoji + ' ' + detail.file + ' (' + detail.title + ') - ' + detail.reason;
+                                log(message, color);
+                            });
+                        } else {
+                            log('✓ Converted ' + data.converted + ' images, skipped ' + data.skipped, 'green');
+                        }
+
+                        // Refresh stats after each batch
+                        refreshStats();
 
                         // Continue if more files
                         if (data.has_more && !shouldStop) {
@@ -181,8 +225,8 @@ class BB_WebP_Admin {
                             $('#stop-convert').hide();
                             log('✓ Conversion complete! Converted ' + convertedCount + ' images total.', 'green');
 
-                            // Refresh page after 2 seconds to update stats
-                            setTimeout(() => location.reload(), 2000);
+                            // Final stats refresh
+                            setTimeout(refreshStats, 1000);
                         }
                     } else {
                         isRunning = false;
@@ -224,6 +268,34 @@ class BB_WebP_Admin {
         $result = $converter->bulk_convert_existing_images($batch_size, $offset);
 
         wp_send_json_success($result);
+    }
+
+    public function ajax_clear_cache() {
+        check_ajax_referer('wp_ajax');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+
+        delete_transient('bb_webp_stats');
+        wp_send_json_success(array('message' => 'Cache cleared'));
+    }
+
+    public function ajax_get_stats() {
+        check_ajax_referer('wp_ajax');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+
+        require_once plugin_dir_path(__FILE__) . 'class-webp-converter.php';
+        $converter = new BB_WebP_Converter();
+
+        // Force refresh stats by clearing cache first
+        delete_transient('bb_webp_stats');
+        $stats = $converter->get_webp_stats();
+
+        wp_send_json_success($stats);
     }
 
     private function format_bytes($bytes) {
