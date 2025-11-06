@@ -119,16 +119,7 @@ class BB_CRON_Handler {
             return;
         }
 
-        // Initialize uploader
-        require_once plugin_dir_path(__FILE__) . 'class-uploader.php';
-
-        $uploader = new BB_Uploader(
-            get_option('bb_bucket'),
-            get_option('bb_endpoint'),
-            get_option('bb_cdn_url'),
-            get_option('bb_key_id'),
-            get_option('bb_app_key')
-        );
+        $cdn_url = get_option('bb_cdn_url');
 
         // Check each attachment
         foreach ($attachments as $attachment) {
@@ -139,8 +130,8 @@ class BB_CRON_Handler {
                 continue;
             }
 
-            // Check if file exists on B2
-            if ($uploader->file_exists_on_b2($file)) {
+            // Check if file exists on CDN (simpler than B2 auth)
+            if ($this->file_exists_on_cdn($file, $cdn_url)) {
                 update_post_meta($attachment->ID, '_bb_uploaded', 1);
                 $status['verified_files']++;
             } else {
@@ -155,6 +146,30 @@ class BB_CRON_Handler {
 
         // Log progress
         error_log("BB_CRON: Processed batch. Progress: {$status['verified_files']}/{$status['total_files']} verified");
+    }
+
+    /**
+     * Check if file exists on CDN via HTTP HEAD request
+     */
+    private function file_exists_on_cdn($relative_path, $cdn_url) {
+        // Build CDN URL
+        $url = rtrim($cdn_url, '/') . '/' . ltrim($relative_path, '/');
+
+        // Make HEAD request
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'HEAD');
+        curl_setopt($ch, CURLOPT_NOBODY, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+
+        curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return $http_code == 200;
     }
 
     /**
