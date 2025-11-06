@@ -18,9 +18,11 @@ class BB_Media_Handler {
     }
 
     public function start_output_buffering() {
-        if (!is_admin()) {
-            ob_start(array($this, 'replace_urls_in_output'));
-        }
+        // Disabled: Output buffer replacement doesn't have attachment context
+        // Individual attachment filters handle URL replacement with proper _bb_uploaded checks
+        // if (!is_admin()) {
+        //     ob_start(array($this, 'replace_urls_in_output'));
+        // }
     }
 
     public function replace_urls_in_output($buffer) {
@@ -199,18 +201,47 @@ class BB_Media_Handler {
             return $sources;
         }
 
+        // Only use CDN if file was verified and uploaded to Backblaze
+        if (!get_post_meta($attachment_id, '_bb_uploaded', true)) {
+            return $sources;
+        }
+
+        $excluded_extensions = $this->get_excluded_extensions();
         $wp_upload_dir = wp_upload_dir();
         $base_url = $wp_upload_dir['baseurl'];
 
         foreach ($sources as $width => $source) {
-            // Only replace image URLs, skip CSS/JS files and Elementor generated CSS
-            if (!preg_match('/\.(css|js)(\?|$)/i', $source['url']) &&
-                strpos($source['url'], '/elementor/css/') === false) {
-                $sources[$width]['url'] = str_replace($base_url, $cdn_url, $source['url']);
+            // Check if URL has excluded extension
+            if ($this->should_exclude_url($source['url'], $excluded_extensions)) {
+                continue;
             }
+
+            $sources[$width]['url'] = str_replace($base_url, $cdn_url, $source['url']);
         }
 
         return $sources;
+    }
+
+    private function get_excluded_extensions() {
+        $excluded = get_option('bb_excluded_extensions', 'css,js');
+        return array_map('trim', explode(',', strtolower($excluded)));
+    }
+
+    private function should_exclude_url($url, $excluded_extensions) {
+        // Check Elementor paths
+        if (strpos($url, '/elementor/css/') !== false) {
+            return true;
+        }
+
+        // Check for excluded file extensions
+        foreach ($excluded_extensions as $ext) {
+            if (empty($ext)) continue;
+            if (preg_match('/\.' . preg_quote($ext) . '(\?|$)/i', $url)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function filter_upload_dir($uploads) {
@@ -223,11 +254,13 @@ class BB_Media_Handler {
     }
 
     public function prevent_css_cdn($src, $handle = '') {
-        // Prevent CDN URL substitution for CSS and JS files
-        if (preg_match('/\.(css|js)(\?|$)/i', $src) || strpos($src, '/elementor/css/') !== false) {
+        // Prevent CDN URL substitution for excluded file types
+        $excluded_extensions = $this->get_excluded_extensions();
+
+        if ($this->should_exclude_url($src, $excluded_extensions)) {
             $cdn_url = get_option('bb_cdn_url');
             $site_url = get_site_url();
-            // Ensure CSS/JS files use site URL, not CDN
+            // Ensure excluded files use site URL, not CDN
             if (strpos($src, $cdn_url) !== false) {
                 return str_replace($cdn_url, $site_url, $src);
             }

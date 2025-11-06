@@ -14,6 +14,7 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-settings.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-media-handler.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-bulk-sync.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-admin-menu.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-cli-commands.php';
 
 // Initialize plugin
 class BackblazeAutoUpload {

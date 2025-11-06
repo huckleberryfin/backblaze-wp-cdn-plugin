@@ -15,10 +15,24 @@ class BB_Settings {
         register_setting('backblaze_settings', 'bb_cdn_url');
         register_setting('backblaze_settings', 'bb_key_id');
         register_setting('backblaze_settings', 'bb_app_key');
-        
+        register_setting('backblaze_settings', 'bb_excluded_extensions', array(
+            'type' => 'string',
+            'sanitize_callback' => array($this, 'sanitize_excluded_extensions')
+        ));
+
         if (isset($_POST['test_upload']) && check_admin_referer('backblaze_test')) {
             add_action('admin_notices', array($this, 'display_test_results'));
         }
+    }
+
+    public function sanitize_excluded_extensions($input) {
+        if (empty($input)) {
+            return 'css,js';
+        }
+        // Lowercase and remove spaces
+        $extensions = array_map('trim', explode(',', strtolower($input)));
+        $extensions = array_filter($extensions);
+        return implode(',', $extensions);
     }
 
     public function settings_page() {
@@ -48,6 +62,11 @@ class BB_Settings {
                     <tr>
                         <th>Backblaze Application Key</th>
                         <td><input type="password" name="bb_app_key" value="<?php echo esc_attr(get_option('bb_app_key')); ?>" class="regular-text"></td>
+                    </tr>
+                    <tr>
+                        <th>Excluded File Extensions</th>
+                        <td><input type="text" name="bb_excluded_extensions" value="<?php echo esc_attr(get_option('bb_excluded_extensions', 'css,js')); ?>" class="regular-text">
+                        <p class="description">Comma-separated file extensions to exclude from CDN (e.g., css,js,svg). These files will always load from your server.</p></td>
                     </tr>
                 </table>
                 <?php submit_button(); ?>

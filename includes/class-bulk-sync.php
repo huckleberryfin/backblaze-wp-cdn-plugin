@@ -204,12 +204,23 @@ class BB_Bulk_Sync {
 
     public function ajax_sync_batch() {
         check_ajax_referer('wp_ajax');
-        
+
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Insufficient permissions');
         }
 
-        $task = $_POST['task'] ?? '';
+        // Rate limiting: max 10 requests per minute per IP
+        $ip = sanitize_text_field($_SERVER['REMOTE_ADDR'] ?? '');
+        $rate_limit_key = 'bb_sync_rate_' . md5($ip);
+        $request_count = get_transient($rate_limit_key);
+
+        if ($request_count >= 10) {
+            wp_send_json_error('Rate limit exceeded. Please wait before making another request.');
+        }
+
+        set_transient($rate_limit_key, ($request_count ?: 0) + 1, 60);
+
+        $task = sanitize_text_field($_POST['task'] ?? '');
 
         if ($task === 'get_counts') {
             $this->get_file_counts();
@@ -348,11 +359,18 @@ class BB_Bulk_Sync {
 
     private function reset_sync_status() {
         global $wpdb;
-        
-        $count = $wpdb->query(
-            "DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_bb_uploaded'"
+
+        // Properly use $wpdb->delete() instead of raw query
+        $count = $wpdb->delete(
+            $wpdb->postmeta,
+            array('meta_key' => '_bb_uploaded'),
+            array('%s')
         );
-        
+
+        if ($count === false) {
+            wp_send_json_error('Failed to reset sync status: ' . $wpdb->last_error);
+        }
+
         wp_send_json_success(array(
             'count' => $count
         ));
