@@ -14,7 +14,8 @@ class BB_Media_Handler {
         add_filter('stylesheet_uri', array($this, 'prevent_css_cdn'), 10, 2);
         add_filter('style_loader_src', array($this, 'prevent_css_cdn'), 10, 2);
         add_filter('the_content', array($this, 'replace_image_urls_in_content'), 999);
-        add_action('init', array($this, 'start_output_buffering'));
+        // Temporarily disabled output buffering - causing CSS issues
+        // add_action('init', array($this, 'start_output_buffering'));
     }
 
     public function start_output_buffering() {
